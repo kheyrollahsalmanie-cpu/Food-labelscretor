@@ -1483,7 +1483,12 @@ loadState();state.companies.forEach(c=>{if(RECURRING_SPECIAL_COMPANIES.some(n=>n
  function stablePayload(p){const q={};Object.keys(p||{}).sort().forEach(k=>{if(k!=='__updatedAt')q[k]=p[k];});return JSON.stringify(q);}
  function setSignedIn(user){el('foodCloudSyncAuth').style.display=user?'none':'block';el('foodCloudSyncActions').style.display=user?'block':'none';if(user)status('وارد شده‌اید: '+user.email+'\nاطلاعات فقط برای حساب خودتان قابل دسترسی است.');}
  async function currentUser(){if(!client)return null;const r=await client.auth.getUser();return r.data&&r.data.user?r.data.user:null;}
- async function readCloud(){const u=await currentUser();if(!u)throw new Error('ابتدا وارد حساب شوید.');const r=await client.from('app_sync').select('payload,updated_at').eq('user_id',u.id).maybeSingle();if(r.error)throw r.error;return r.data;}
+ async function readCloud(){
+  const u=await currentUser();if(!u)throw new Error('ابتدا وارد حساب شوید.');
+  const query=client.from('app_sync').select('payload,updated_at').eq('user_id',u.id).maybeSingle();
+  const r=await Promise.race([query,new Promise((_,reject)=>setTimeout(()=>reject(new Error('ورود انجام شد، اما پاسخ پایگاه دادهٔ ابری دریافت نشد. دسترسی جدول app_sync و سیاست‌های امنیتی Supabase را باید بررسی کنیم.')),12000))]);
+  if(r.error)throw r.error;return r.data;
+ }
  async function upload(manual){
   if(busy||applying)return;busy=true;
   try{
@@ -1538,7 +1543,7 @@ loadState();state.companies.forEach(c=>{if(RECURRING_SPECIAL_COMPANIES.some(n=>n
    try{
     const r=await Promise.race([client.auth.signInWithPassword({email,password}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('پاسخی از سرور دریافت نشد. اینترنت گوشی یا دسترسی به سرویس همگام‌سازی را بررسی کنید و دوباره تلاش کنید.')),15000))]);
     if(r.error){status('ورود ناموفق بود: '+r.error.message+'\nاگر هنوز حساب نساخته‌اید، ابتدا «ساخت حساب» را بزنید.');return;}
-    el('foodCloudSyncPassword').value='';await afterLogin();
+    el('foodCloudSyncPassword').value='';status('ورود موفق بود؛ در حال بررسی فضای ابری…');setSignedIn({email});await afterLogin();
    }catch(e){status('ورود انجام نشد: '+(e&&e.message?e.message:String(e)));}
    finally{btn.disabled=false;}
   });
@@ -1551,7 +1556,7 @@ loadState();state.companies.forEach(c=>{if(RECURRING_SPECIAL_COMPANIES.some(n=>n
     const r=await Promise.race([client.auth.signUp({email,password}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('پاسخی از سرور دریافت نشد. اینترنت گوشی را بررسی کنید و دوباره تلاش کنید.')),15000))]);
     if(r.error){status('ساخت حساب ناموفق بود: '+r.error.message);return;}
     el('foodCloudSyncPassword').value='';
-    if(r.data.session){await afterLogin();}else{status('درخواست ساخت حساب ثبت شد. صندوق ورودی و پوشه هرزنامه ایمیل را بررسی و در صورت دریافت پیام، ایمیل را تأیید کنید؛ سپس با همان ایمیل و رمز وارد شوید.');}
+    if(r.data.session){status('حساب ساخته شد؛ در حال بررسی فضای ابری…');setSignedIn(r.data.user||{email});await afterLogin();}else{status('درخواست ساخت حساب ثبت شد. صندوق ورودی و پوشه هرزنامه ایمیل را بررسی و در صورت دریافت پیام، ایمیل را تأیید کنید؛ سپس با همان ایمیل و رمز وارد شوید.');}
    }catch(e){status('ساخت حساب انجام نشد: '+(e&&e.message?e.message:String(e)));}
    finally{btn.disabled=false;}
   });
