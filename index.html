@@ -1434,6 +1434,133 @@ loadState();state.companies.forEach(c=>{if(RECURRING_SPECIAL_COMPANIES.some(n=>n
  body.sample-label-print-mode #printLabels .sample-label:not(.individual-sample).lab-sample .sample-date{font-size:15pt!important;margin-top:auto!important;padding-top:0.5mm!important}
 }
 </style>
+
+<!-- food-cloud-sync-panel-v1: isolated cloud sync; existing app logic remains unchanged -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style id="food-cloud-sync-panel-v1">
+#foodCloudSyncBtn{position:fixed;z-index:99990;left:14px;bottom:16px;border:0;border-radius:999px;padding:12px 16px;background:linear-gradient(135deg,#087f8c,#2563eb);color:#fff;font:700 14px Tahoma,Arial,sans-serif;box-shadow:0 8px 24px #0003;cursor:pointer}
+#foodCloudSyncShade{display:none;position:fixed;inset:0;z-index:99999;background:#0f172acc;align-items:center;justify-content:center;padding:16px;direction:rtl;font-family:Tahoma,Arial,sans-serif}
+#foodCloudSyncShade .fcs-card{width:min(440px,100%);max-height:90vh;overflow:auto;background:#fff;color:#172033;border-radius:20px;padding:20px;box-shadow:0 20px 60px #0005}
+#foodCloudSyncShade h3{margin:0 0 10px;font-size:19px}
+#foodCloudSyncShade p{line-height:1.8;font-size:13px}
+#foodCloudSyncShade input{box-sizing:border-box;width:100%;padding:11px;margin:6px 0;border:1px solid #cbd5e1;border-radius:10px;font:14px Tahoma,Arial,sans-serif}
+#foodCloudSyncShade button{border:0;border-radius:10px;padding:10px 12px;margin:5px 2px;font:700 13px Tahoma,Arial,sans-serif;cursor:pointer}
+#foodCloudSyncShade .fcs-primary{background:#087f8c;color:white}
+#foodCloudSyncShade .fcs-secondary{background:#e2e8f0;color:#172033}
+#foodCloudSyncStatus{padding:10px;border-radius:10px;background:#f1f5f9;line-height:1.8;font-size:12px;overflow-wrap:anywhere}
+</style>
+<button id="foodCloudSyncBtn" type="button" aria-label="همگام‌سازی آنلاین">☁️ همگام‌سازی آنلاین</button>
+<div id="foodCloudSyncShade" role="dialog" aria-modal="true" aria-label="همگام‌سازی آنلاین">
+ <div class="fcs-card">
+  <h3>☁️ همگام‌سازی آنلاین برنامه</h3>
+  <p>با ورود به حساب خود، اطلاعات انتخاب‌شدهٔ برنامه بین دستگاه‌ها ذخیره و بازیابی می‌شود. رمز شما در این برنامه ذخیره نمی‌شود. برای امنیت، فقط اطلاعات برنامه همگام‌سازی می‌شود؛ نه رمزهای ورود سایت‌های دیگر.</p>
+  <div id="foodCloudSyncStatus">وضعیت: هنوز وارد نشده‌اید.</div>
+  <div id="foodCloudSyncAuth">
+   <input id="foodCloudSyncEmail" type="email" autocomplete="email" placeholder="ایمیل حساب همگام‌سازی">
+   <input id="foodCloudSyncPassword" type="password" autocomplete="current-password" placeholder="رمز حساب همگام‌سازی (حداقل ۶ نویسه)">
+   <button id="foodCloudSyncLogin" class="fcs-primary" type="button">ورود</button>
+   <button id="foodCloudSyncSignup" class="fcs-secondary" type="button">ساخت حساب</button>
+  </div>
+  <div id="foodCloudSyncActions" style="display:none">
+   <button id="foodCloudSyncUpload" class="fcs-primary" type="button">ذخیره اطلاعات این دستگاه در ابر</button>
+   <button id="foodCloudSyncDownload" class="fcs-secondary" type="button">بازیابی اطلاعات از ابر</button>
+   <button id="foodCloudSyncLogout" class="fcs-secondary" type="button">خروج از حساب</button>
+  </div>
+  <div style="text-align:left;margin-top:12px"><button id="foodCloudSyncClose" class="fcs-secondary" type="button">بستن</button></div>
+ </div>
+</div>
+<script id="food-cloud-sync-panel-v1-script">
+(function(){
+ 'use strict';
+ const SUPABASE_URL='https://zvqyqnyeqzyfcfbrcbvw.supabase.co';
+ const SUPABASE_KEY='sb_publishable_4ygkMLYnjzoNHUwP4kZt8A_fWCjX859';
+ const KEYS=['food_order_manager_v3','food_order_type_settings_v1','food_label_settings','food_order_theme','food_order_appearance_v1','food_imported_file_signatures_v1'];
+ const ENABLE_KEY='food_cloud_sync_enabled_v1';
+ let client=null, applying=false, timer=null, busy=false;
+ const el=id=>document.getElementById(id);
+ function status(msg){el('foodCloudSyncStatus').textContent=msg;}
+ function getPayload(){const p={};KEYS.forEach(k=>{const v=localStorage.getItem(k);if(v!==null)p[k]=v;});return p;}
+ function stablePayload(p){const q={};Object.keys(p||{}).sort().forEach(k=>{if(k!=='__updatedAt')q[k]=p[k];});return JSON.stringify(q);}
+ function setSignedIn(user){el('foodCloudSyncAuth').style.display=user?'none':'block';el('foodCloudSyncActions').style.display=user?'block':'none';if(user)status('وارد شده‌اید: '+user.email+'\nاطلاعات فقط برای حساب خودتان قابل دسترسی است.');}
+ async function currentUser(){if(!client)return null;const r=await client.auth.getUser();return r.data&&r.data.user?r.data.user:null;}
+ async function readCloud(){const u=await currentUser();if(!u)throw new Error('ابتدا وارد حساب شوید.');const r=await client.from('app_sync').select('payload,updated_at').eq('user_id',u.id).maybeSingle();if(r.error)throw r.error;return r.data;}
+ async function upload(manual){
+  if(busy||applying)return;busy=true;
+  try{
+   const u=await currentUser();if(!u)throw new Error('ابتدا وارد حساب شوید.');
+   const payload=getPayload();payload.__updatedAt=new Date().toISOString();
+   const r=await client.from('app_sync').upsert({user_id:u.id,payload,updated_at:new Date().toISOString()},{onConflict:'user_id'});
+   if(r.error)throw r.error;
+   localStorage.setItem(ENABLE_KEY,'1');
+   status('ذخیرهٔ آنلاین با موفقیت انجام شد.\nآخرین ذخیره: '+new Date().toLocaleString('fa-IR'));
+  }catch(e){status('ذخیره انجام نشد: '+(e.message||String(e)));}
+  finally{busy=false;}
+ }
+ async function download(manual){
+  if(busy)return;busy=true;
+  try{
+   const row=await readCloud();
+   if(!row||!row.payload||!Object.keys(row.payload).some(k=>KEYS.includes(k))){status('هنوز اطلاعاتی در فضای ابری نیست. ابتدا «ذخیره اطلاعات این دستگاه در ابر» را بزنید.');return;}
+   if(manual&&!confirm('اطلاعات انتخاب‌شدهٔ این دستگاه با اطلاعات فضای ابری جایگزین می‌شود. قبل از ادامه مطمئن شوید نسخهٔ لازم را ذخیره کرده‌اید. ادامه می‌دهید؟'))return;
+   applying=true;
+   KEYS.forEach(k=>{if(Object.prototype.hasOwnProperty.call(row.payload,k))localStorage.setItem(k,row.payload[k]);else localStorage.removeItem(k);});
+   localStorage.setItem(ENABLE_KEY,'1');
+   status('بازیابی انجام شد؛ برنامه برای بارگذاری اطلاعات بازیابی‌شده دوباره باز می‌شود.');
+   setTimeout(()=>location.reload(),900);
+  }catch(e){status('بازیابی انجام نشد: '+(e.message||String(e)));}
+  finally{applying=false;busy=false;}
+ }
+ async function afterLogin(){
+  const u=await currentUser();setSignedIn(u);if(!u)return;
+  try{
+   const row=await readCloud();
+   if(!row||!row.payload||!Object.keys(row.payload).some(k=>KEYS.includes(k))){
+    status('حساب آماده است؛ فضای ابری هنوز خالی است. برای شروع، اطلاعات این دستگاه را ذخیره کنید.');return;
+   }
+   const local=getPayload();
+   if(stablePayload(local)===stablePayload(row.payload)){status('این دستگاه و فضای ابری همسان هستند.');localStorage.setItem(ENABLE_KEY,'1');return;}
+   const choice=confirm('اطلاعات این دستگاه با فضای ابری متفاوت است.\nبرای «بازیابی از ابر» تأیید را بزنید؛ برای «ذخیره اطلاعات این دستگاه در ابر» لغو را بزنید.');
+   if(choice)await download(false);else await upload(false);
+  }catch(e){status('بررسی فضای ابری ناموفق بود: '+(e.message||String(e)));}
+ }
+ function queueUpload(){if(applying||busy||localStorage.getItem(ENABLE_KEY)!=='1')return;clearTimeout(timer);timer=setTimeout(()=>upload(false),1800);}
+ function init(){
+  el('foodCloudSyncBtn').addEventListener('click',()=>{el('foodCloudSyncShade').style.display='flex';});
+  el('foodCloudSyncClose').addEventListener('click',()=>el('foodCloudSyncShade').style.display='none');
+  el('foodCloudSyncShade').addEventListener('click',e=>{if(e.target===el('foodCloudSyncShade'))el('foodCloudSyncShade').style.display='none';});
+  if(!window.supabase||!window.supabase.createClient){status('کتابخانهٔ اتصال بارگذاری نشد؛ اتصال اینترنت را بررسی و صفحه را دوباره باز کنید.');return;}
+  client=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+  client.auth.onAuthStateChange((event,session)=>{if(session&&session.user)setSignedIn(session.user);else if(event==='SIGNED_OUT')setSignedIn(null);});
+  el('foodCloudSyncLogin').addEventListener('click',async()=>{
+   const email=el('foodCloudSyncEmail').value.trim(),password=el('foodCloudSyncPassword').value;
+   if(!email||!password){status('ایمیل و رمز را وارد کنید.');return;}
+   status('در حال ورود…');
+   const r=await client.auth.signInWithPassword({email,password});
+   if(r.error){status('ورود ناموفق بود: '+r.error.message);return;}
+   el('foodCloudSyncPassword').value='';await afterLogin();
+  });
+  el('foodCloudSyncSignup').addEventListener('click',async()=>{
+   const email=el('foodCloudSyncEmail').value.trim(),password=el('foodCloudSyncPassword').value;
+   if(!email||!password){status('ایمیل و رمز را وارد کنید.');return;}
+   if(password.length<6){status('رمز باید حداقل ۶ نویسه داشته باشد.');return;}
+   status('در حال ساخت حساب…');
+   const r=await client.auth.signUp({email,password});
+   if(r.error){status('ساخت حساب ناموفق بود: '+r.error.message);return;}
+   el('foodCloudSyncPassword').value='';
+   if(r.data.session){await afterLogin();}else{status('درخواست ساخت حساب ثبت شد. اگر تأیید ایمیل فعال باشد، ایمیل خود را تأیید کنید و سپس وارد شوید.');}
+  });
+  el('foodCloudSyncUpload').addEventListener('click',()=>{if(confirm('اطلاعات انتخاب‌شدهٔ این دستگاه در فضای ابری ذخیره می‌شود و نسخهٔ قبلی فضای ابری را جایگزین می‌کند. ادامه می‌دهید؟'))upload(true);});
+  el('foodCloudSyncDownload').addEventListener('click',()=>download(true));
+  el('foodCloudSyncLogout').addEventListener('click',async()=>{await client.auth.signOut();localStorage.removeItem(ENABLE_KEY);setSignedIn(null);status('از حساب خارج شدید.');});
+  const originalSet=Storage.prototype.setItem;
+  Storage.prototype.setItem=function(key,value){originalSet.call(this,key,value);if(KEYS.includes(String(key)))queueUpload();};
+  const originalRemove=Storage.prototype.removeItem;
+  Storage.prototype.removeItem=function(key){originalRemove.call(this,key);if(KEYS.includes(String(key)))queueUpload();};
+  client.auth.getSession().then(async r=>{const u=r.data&&r.data.session&&r.data.session.user;if(u){setSignedIn(u);if(localStorage.getItem(ENABLE_KEY)==='1')status('حساب متصل است؛ تغییرات این دستگاه پس از چند لحظه ذخیره می‌شوند.');}});
+ }
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
+</script>
 </body>
 </html>
 
