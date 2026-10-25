@@ -1533,21 +1533,27 @@ loadState();state.companies.forEach(c=>{if(RECURRING_SPECIAL_COMPANIES.some(n=>n
   client.auth.onAuthStateChange((event,session)=>{if(session&&session.user)setSignedIn(session.user);else if(event==='SIGNED_OUT')setSignedIn(null);});
   el('foodCloudSyncLogin').addEventListener('click',async()=>{
    const email=el('foodCloudSyncEmail').value.trim(),password=el('foodCloudSyncPassword').value;
-   if(!email||!password){status('ایمیل و رمز را وارد کنید.');return;}
-   status('در حال ورود…');
-   const r=await client.auth.signInWithPassword({email,password});
-   if(r.error){status('ورود ناموفق بود: '+r.error.message);return;}
-   el('foodCloudSyncPassword').value='';await afterLogin();
+   if(!email||!password){status('ایمیل و رمز حساب همگام‌سازی را وارد کنید.');return;}
+   const btn=el('foodCloudSyncLogin');btn.disabled=true;status('در حال ورود… اگر تا ۱۵ ثانیه نتیجه‌ای ندیدید، اتصال اینترنت را بررسی کنید.');
+   try{
+    const r=await Promise.race([client.auth.signInWithPassword({email,password}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('پاسخی از سرور دریافت نشد. اینترنت گوشی یا دسترسی به سرویس همگام‌سازی را بررسی کنید و دوباره تلاش کنید.')),15000))]);
+    if(r.error){status('ورود ناموفق بود: '+r.error.message+'\nاگر هنوز حساب نساخته‌اید، ابتدا «ساخت حساب» را بزنید.');return;}
+    el('foodCloudSyncPassword').value='';await afterLogin();
+   }catch(e){status('ورود انجام نشد: '+(e&&e.message?e.message:String(e)));}
+   finally{btn.disabled=false;}
   });
   el('foodCloudSyncSignup').addEventListener('click',async()=>{
    const email=el('foodCloudSyncEmail').value.trim(),password=el('foodCloudSyncPassword').value;
-   if(!email||!password){status('ایمیل و رمز را وارد کنید.');return;}
+   if(!email||!password){status('برای ساخت حساب، ایمیل خودتان و یک رمز جدید وارد کنید.');return;}
    if(password.length<6){status('رمز باید حداقل ۶ نویسه داشته باشد.');return;}
-   status('در حال ساخت حساب…');
-   const r=await client.auth.signUp({email,password});
-   if(r.error){status('ساخت حساب ناموفق بود: '+r.error.message);return;}
-   el('foodCloudSyncPassword').value='';
-   if(r.data.session){await afterLogin();}else{status('درخواست ساخت حساب ثبت شد. اگر تأیید ایمیل فعال باشد، ایمیل خود را تأیید کنید و سپس وارد شوید.');}
+   const btn=el('foodCloudSyncSignup');btn.disabled=true;status('در حال ساخت حساب…');
+   try{
+    const r=await Promise.race([client.auth.signUp({email,password}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('پاسخی از سرور دریافت نشد. اینترنت گوشی را بررسی کنید و دوباره تلاش کنید.')),15000))]);
+    if(r.error){status('ساخت حساب ناموفق بود: '+r.error.message);return;}
+    el('foodCloudSyncPassword').value='';
+    if(r.data.session){await afterLogin();}else{status('درخواست ساخت حساب ثبت شد. صندوق ورودی و پوشه هرزنامه ایمیل را بررسی و در صورت دریافت پیام، ایمیل را تأیید کنید؛ سپس با همان ایمیل و رمز وارد شوید.');}
+   }catch(e){status('ساخت حساب انجام نشد: '+(e&&e.message?e.message:String(e)));}
+   finally{btn.disabled=false;}
   });
   el('foodCloudSyncUpload').addEventListener('click',()=>{if(confirm('اطلاعات انتخاب‌شدهٔ این دستگاه در فضای ابری ذخیره می‌شود و نسخهٔ قبلی فضای ابری را جایگزین می‌کند. ادامه می‌دهید؟'))upload(true);});
   el('foodCloudSyncDownload').addEventListener('click',()=>download(true));
